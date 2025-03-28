@@ -1,0 +1,23 @@
+[project]
+name = "lim2v"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "Chris Bowdon",email = "cbowdon@example.com"}
+]
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pyserini (>=0.44.0,<0.45.0)",
+    "tqdm (>=4.67.1,<5.0.0)",
+    "pytrec-eval (>=0.5,<0.6)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.group.dev.dependencies]
+ipykernel = "^6.29.5"
+
