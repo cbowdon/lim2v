@@ -35,35 +35,76 @@ def embed_texts(texts: list[str]):
     )
 
 
-def build_index(*, dim: int, limit: int | None):
-
+def build_ivfpq_index(passages: list[str], *, dim: int):
     # using the params described in ColBERT
     nlist = 2000
     M = 16  # number of sub quantizers
     bits_per_vector = 8
     quantizer = IndexFlatL2(dim)
     index = IndexIVFPQ(quantizer, dim, nlist, M, bits_per_vector)
-
-    pids, passages = load_passages(limit=limit)
     embeds = embed_texts(passages)
-
     index.train(embeds)
     index.add(embeds)
     index.nprobe = 10
-    return pids, passages, index
+    return index
 
 
-pids, passages, index = build_index(dim=384, limit=1_000_000)
+def build_flat_index(passages: list[str], *, dim: int):
+    index = IndexFlatL2(dim)
+    embeds = embed_texts(passages)
+    index.add(embeds)
+    return index
 
-# queries = embed_texts(["what is skimmed milk?"])
-# index.search(queries, k=10)
+
+def load_qrels(pids):
+    with open("collections/msmarco-passage/qrels.dev.small.tsv") as f:
+        _qrels = pytrec_eval.parse_qrel(f)
+
+    qrels = {}
+    pidset = set(pids)
+    for k, v in _qrels.items():
+        if len(v) > 0:
+            _pid = list(v.keys())[0]
+            if _pid in pidset:
+                qrels[k] = v
+    return qrels
 
 
-queries = {}
-with open("collections/msmarco-passage/queries.dev.small.tsv") as f:
-    for line in f:
-        qid, query = line.strip().split("\t")
-        queries[qid] = query
+def load_queries(qrels):
+    queries = {}
+    with open("collections/msmarco-passage/queries.dev.small.tsv") as f:
+        for line in f:
+            qid, query = line.strip().split("\t")
+            if qid in qrels:
+                queries[qid] = query
+    return queries
+
+
+def searcher(pids: list[int], passages: list[str]):
+    index = build_flat_index(passages, dim=384)
+
+    def _search(query_ids: list[str], query_texts: list[str]):
+        query_embeddings = embed_texts(query_texts)
+        D, I = index.search(query_embeddings, 10)  # top-10
+        results = []
+        for i, qid in enumerate(query_ids):
+            for rank, pid_idx in enumerate(I[i]):
+                pid = pids[pid_idx]
+                score = D[i][rank]
+                results.append((qid, pid, rank + 1, score))
+        return results
+
+    return _search
+
+
+limit = 100_000
+
+pids, passages = load_passages(limit=limit)
+index = build_flat_index(passages, dim=384)
+
+qrels = load_qrels(pids)
+
+queries = load_queries(qrels)
 
 # Embed queries
 query_ids = list(queries.keys())
@@ -74,28 +115,16 @@ query_embeddings = embed_texts(query_texts)
 D, I = index.search(query_embeddings, 10)  # top-10
 
 
-with open("dense_run.txt", "w") as fout:
+with open("results/dense_run.txt", "w") as fout:
     for i, qid in enumerate(query_ids):
         for rank, pid_idx in enumerate(I[i]):
             pid = pids[pid_idx]
-            score = D[i][rank]
+            score = 1 - D[i][rank]
             fout.write(f"{qid} Q0 {pid} {rank+1} {score} dense-model\n")
 
 
-# Load qrels
-with open("collections/msmarco-passage/qrels.dev.small.tsv") as f:
-    _qrels = pytrec_eval.parse_qrel(f)
-
-qrels = {}
-pidset = set(pids)
-for k, v in _qrels.items():
-    if len(v) > 0:
-        _pid = list(v.keys())[0]
-        if _pid in pidset:
-            qrels[k] = v
-
 # Load run file
-with open("dense_run.txt") as f:
+with open("results/dense_run.txt") as f:
     run = pytrec_eval.parse_run(f)
 
 # Evaluate
@@ -105,3 +134,27 @@ results = evaluator.evaluate(run)
 # Compute mean
 mrr = sum([metrics["recip_rank"] for metrics in results.values()]) / len(results)
 print(f"MRR@10: {mrr:.4f}")
+
+for i in range(5):
+    _qr = qrels[query_ids[i]]
+    print(query_ids[i], query_texts[i])
+    for k, j in enumerate(I[i]):
+        print(pids[j], k + 1, pids[j] in _qr, passages[j][:100], sep="\t")
+    print("")
+
+
+def mrr(qrels, run):
+    rrs = []
+    for qid, qrel in qrels.items():
+        if qid in run:
+            for i, pid in enumerate(run[qid].keys()):
+                if pid in qrel:
+                    rank = i + 1
+                    rrs.append(1.0 / rank)
+                    break
+            else:
+                rrs.append(0.0)
+    return sum(rrs) / len(rrs)
+
+
+mrr(qrels, run)

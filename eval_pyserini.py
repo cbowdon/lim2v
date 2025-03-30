@@ -9,7 +9,7 @@ searcher.search("What's the time?")
 topics = get_topics("msmarco-passage-dev-subset")
 
 # Store results in TREC format
-with open('bm25_run.txt', 'w') as fout:
+with open('results/bm25_run.txt', 'w') as fout:
     for qid, query in topics.items():
         hits = searcher.search(query["title"], k=10)
         for rank, hit in enumerate(hits):
@@ -24,7 +24,7 @@ with open(qrel_file) as f:
     qrels = pytrec_eval.parse_qrel(f)
 
 # Load run file
-with open('bm25_run.txt') as f:
+with open('results/bm25_run.txt') as f:
     run = pytrec_eval.parse_run(f)
 
 # Evaluate
