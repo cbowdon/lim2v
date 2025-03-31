@@ -2,11 +2,13 @@ import numpy as np
 import pytrec_eval
 from faiss import IndexFlatL2, IndexIVFPQ
 from itertools import batched
+from model2vec import StaticModel
 from numpy.typing import NDArray
 from sentence_transformers import SentenceTransformer
 from typing import Literal
 
 sbert = SentenceTransformer("all-MiniLM-L6-v2")
+potion = StaticModel.from_pretrained("minishlab/potion-base-8M")
 
 
 def load_passages(*, limit: int | None):
@@ -35,38 +37,44 @@ def sbert_embed(texts: list[str]):
     )
 
 
-def build_ivfpq_index(passages: list[str], *, dim: int):
+def potion_embed(texts: list[str]):
+    return potion.encode(
+        texts,
+        output_value="sentence_embedding",
+        batch_size=32,
+        convert_to_numpy=True,
+        normalize_embeddings=True,
+        show_progress_bar=True,
+    )
+
+
+def build_ivfpq_index(embeds, *, dim: int):
     # using the params described in ColBERT
     nlist = 2000
     M = 16  # number of sub quantizers
     bits_per_vector = 8
     quantizer = IndexFlatL2(dim)
     index = IndexIVFPQ(quantizer, dim, nlist, M, bits_per_vector)
-    embeds = sbert_embed(passages)
     index.train(embeds)
     index.add(embeds)
     index.nprobe = 10
     return index
 
 
-def build_flat_index(passages: list[str], *, dim: int):
+def build_flat_index(embeds, *, dim: int):
     index = IndexFlatL2(dim)
-    embeds = sbert_embed(passages)
     index.add(embeds)
     return index
 
 
 def load_qrels(pids):
-    with open("collections/msmarco-passage/qrels.dev.small.tsv") as f:
-        _qrels = pytrec_eval.parse_qrel(f)
-
     qrels = {}
     pidset = set(pids)
-    for k, v in _qrels.items():
-        if len(v) > 0:
-            _pid = list(v.keys())[0]
-            if _pid in pidset:
-                qrels[k] = v
+    with open("collections/msmarco-passage/qrels.dev.small.tsv") as f:
+        for line in f:
+            qid, _, pid, relevance = line.strip().split("\t")
+            if pid in pidset:
+                qrels[qid] = {pid: int(relevance)}
     return qrels
 
 
@@ -86,13 +94,14 @@ def searcher(
     embed_fn=sbert_embed,
     index_fn=build_flat_index,
 ):
-    index = index_fn(passages, dim=384)
+    embeds = embed_fn(passages)
+    index = index_fn(embeds, dim=embeds.shape[1])
 
     def _search(queries: dict[str, str]):
 
         query_ids = list(queries.keys())
         query_texts = list(queries.values())
-        query_embeddings = sbert_embed(query_texts)
+        query_embeddings = embed_fn(query_texts)
 
         D, I = index.search(query_embeddings, 10)  # top-10
         results = []
@@ -112,7 +121,7 @@ def save_run(model_name: str, results: list[tuple[str, str, int, float]]):
             fout.write(f"{qid} Q0 {pid} {rank} {score} {model_name}\n")
 
 
-def mrr(qrels, run):
+def eval_mrr(qrels, run):
     rrs = []
     for qid, qrel in qrels.items():
         if qid in run:
@@ -126,21 +135,21 @@ def mrr(qrels, run):
     return sum(rrs) / len(rrs)
 
 
-limit = 1_000
+limit = 100_000
 
 pids, passages = load_passages(limit=limit)
-
-search = searcher(pids, passages, sbert_embed, build_flat_index)
-
-results = search(queries)
-
-save_run("dense-model", results)
-
-index = build_flat_index(passages, dim=384)
 
 qrels = load_qrels(pids)
 
 queries = load_queries(qrels)
+
+sbert_search = searcher(pids, passages, sbert_embed, build_flat_index)
+potion_search = searcher(pids, passages, potion_embed, build_flat_index)
+
+results = potion_search(queries)
+results = sbert_search(queries)
+
+save_run("dense-model", results)
 
 
 # Load run file
@@ -156,4 +165,4 @@ mrr = sum([metrics["recip_rank"] for metrics in results.values()]) / len(results
 print(f"MRR@10: {mrr:.4f}")
 
 
-mrr(qrels, run)
+print(eval_mrr(qrels, run))
