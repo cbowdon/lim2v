@@ -6,7 +6,7 @@ from numpy.typing import NDArray
 from sentence_transformers import SentenceTransformer
 from typing import Literal
 
-biencoder = SentenceTransformer("all-MiniLM-L6-v2")
+sbert = SentenceTransformer("all-MiniLM-L6-v2")
 
 
 def load_passages(*, limit: int | None):
@@ -24,8 +24,8 @@ def load_passages(*, limit: int | None):
     return passage_ids, passages
 
 
-def embed_texts(texts: list[str]):
-    return biencoder.encode(
+def sbert_embed(texts: list[str]):
+    return sbert.encode(
         texts,
         output_value="sentence_embedding",
         batch_size=32,
@@ -42,7 +42,7 @@ def build_ivfpq_index(passages: list[str], *, dim: int):
     bits_per_vector = 8
     quantizer = IndexFlatL2(dim)
     index = IndexIVFPQ(quantizer, dim, nlist, M, bits_per_vector)
-    embeds = embed_texts(passages)
+    embeds = sbert_embed(passages)
     index.train(embeds)
     index.add(embeds)
     index.nprobe = 10
@@ -51,7 +51,7 @@ def build_ivfpq_index(passages: list[str], *, dim: int):
 
 def build_flat_index(passages: list[str], *, dim: int):
     index = IndexFlatL2(dim)
-    embeds = embed_texts(passages)
+    embeds = sbert_embed(passages)
     index.add(embeds)
     return index
 
@@ -80,67 +80,36 @@ def load_queries(qrels):
     return queries
 
 
-def searcher(pids: list[int], passages: list[str]):
-    index = build_flat_index(passages, dim=384)
+def searcher(
+    pids: list[int],
+    passages: list[str],
+    embed_fn=sbert_embed,
+    index_fn=build_flat_index,
+):
+    index = index_fn(passages, dim=384)
 
-    def _search(query_ids: list[str], query_texts: list[str]):
-        query_embeddings = embed_texts(query_texts)
+    def _search(queries: dict[str, str]):
+
+        query_ids = list(queries.keys())
+        query_texts = list(queries.values())
+        query_embeddings = sbert_embed(query_texts)
+
         D, I = index.search(query_embeddings, 10)  # top-10
         results = []
         for i, qid in enumerate(query_ids):
             for rank, pid_idx in enumerate(I[i]):
                 pid = pids[pid_idx]
-                score = D[i][rank]
-                results.append((qid, pid, rank + 1, score))
+                score = 1 - D[i][rank]
+                results.append((qid, pid, rank + 1, score.item()))
         return results
 
     return _search
 
 
-limit = 100_000
-
-pids, passages = load_passages(limit=limit)
-index = build_flat_index(passages, dim=384)
-
-qrels = load_qrels(pids)
-
-queries = load_queries(qrels)
-
-# Embed queries
-query_ids = list(queries.keys())
-query_texts = list(queries.values())
-query_embeddings = embed_texts(query_texts)
-
-# Search
-D, I = index.search(query_embeddings, 10)  # top-10
-
-
-with open("results/dense_run.txt", "w") as fout:
-    for i, qid in enumerate(query_ids):
-        for rank, pid_idx in enumerate(I[i]):
-            pid = pids[pid_idx]
-            score = 1 - D[i][rank]
-            fout.write(f"{qid} Q0 {pid} {rank+1} {score} dense-model\n")
-
-
-# Load run file
-with open("results/dense_run.txt") as f:
-    run = pytrec_eval.parse_run(f)
-
-# Evaluate
-evaluator = pytrec_eval.RelevanceEvaluator(qrels, {"recip_rank"})
-results = evaluator.evaluate(run)
-
-# Compute mean
-mrr = sum([metrics["recip_rank"] for metrics in results.values()]) / len(results)
-print(f"MRR@10: {mrr:.4f}")
-
-for i in range(5):
-    _qr = qrels[query_ids[i]]
-    print(query_ids[i], query_texts[i])
-    for k, j in enumerate(I[i]):
-        print(pids[j], k + 1, pids[j] in _qr, passages[j][:100], sep="\t")
-    print("")
+def save_run(model_name: str, results: list[tuple[str, str, int, float]]):
+    with open(f"results/{model_name}.txt", "w") as fout:
+        for qid, pid, rank, score in results:
+            fout.write(f"{qid} Q0 {pid} {rank} {score} {model_name}\n")
 
 
 def mrr(qrels, run):
@@ -155,6 +124,36 @@ def mrr(qrels, run):
             else:
                 rrs.append(0.0)
     return sum(rrs) / len(rrs)
+
+
+limit = 1_000
+
+pids, passages = load_passages(limit=limit)
+
+search = searcher(pids, passages, sbert_embed, build_flat_index)
+
+results = search(queries)
+
+save_run("dense-model", results)
+
+index = build_flat_index(passages, dim=384)
+
+qrels = load_qrels(pids)
+
+queries = load_queries(qrels)
+
+
+# Load run file
+with open(f"results/dense-model.txt") as f:
+    run = pytrec_eval.parse_run(f)
+
+# Evaluate
+evaluator = pytrec_eval.RelevanceEvaluator(qrels, {"recip_rank"})
+results = evaluator.evaluate(run)
+
+# Compute mean
+mrr = sum([metrics["recip_rank"] for metrics in results.values()]) / len(results)
+print(f"MRR@10: {mrr:.4f}")
 
 
 mrr(qrels, run)
