@@ -2,17 +2,46 @@
 
 ## 1. Confirm BM25 baseline
 
-This was very straightforward thanks to Pyserini's pre-compiled indices. I was able to reproduce the 0.186 MRR@10 easily.
+This was very straightforward thanks to Pyserini's pre-compiled indices. I was
+able to reproduce the 0.186 MRR@10 easily.
 
-## 1. Eval sbert + faiss + cosine/inner product
+| Model           | Subset                       | MRR@10 |
+| --------------- | ---------------------------- | ------ |
+| BM25 (Pyserini) | 8.8M passages, 6,980 queries | 0.184  |
 
-Due to the time taken to vectorise all 8.8M passages in MSMARCO, I reduced down to a 1M subset. However MRR@10 was poor, even after accounting for QIDs/PIDs not in this subset. Upon manually judging a sample of results it became clear that the MSMARCO passage annotations are inconsistent, with multiple equally correct answers per query, and on occasion none of them selected as the actual answer.
+## 1. Eval sbert + faiss
 
-Furthermore it turns out that the reciprocal rank calculation in `pytrec_eval` has some surprising behaviour; it depends on the relevance score being descending, even though relevance scores are not part of the reciprocal rank calculation. Eventually I was able to configure the evaluation with `pytrec_eval` so that it agreed with a manually calculated MRR, after which the MRR@10 was higher as expected. My manually calculated MRR agreed with the Anserini figures reported also.
+Due to the time taken to vectorise all 8.8M passages in MSMARCO, I reduced down
+to a 1M subset. However MRR@10 was poor, even after accounting for QIDs/PIDs not
+in this subset. Upon manually judging a sample of results it became clear that
+the MSMARCO passage annotations are inconsistent, with multiple equally correct
+answers per query, and on occasion none of them selected as the actual answer.
 
-## 2. Eval m2v + faiss + cosine
+Furthermore it turns out that the reciprocal rank calculation in `pytrec_eval`
+has some surprising behaviour; it depends on the relevance score being
+descending, even though relevance scores are not part of the reciprocal rank
+calculation. Eventually I was able to configure the evaluation with
+`pytrec_eval` so that it agreed with a manually calculated MRR, after which the
+MRR@10 was higher as expected. My manually calculated MRR agreed with the
+Anserini figures reported also.
+
+| Model                    | Subset                   | MRR@10 |
+| ------------------------ | ------------------------ | ------ |
+| all-MiniLM-L6-v2 + FAISS | 1M passages, 238 queries | 0.32   |
+
+## 2. Eval m2v + faiss
+
+The naive run, dropping model2vec (potion) into the same experimental setup, did not perform well; it was actually worse than the well-tuned BM25.
+
+| Model                  | Subset                       | MRR@10 |
+| ---------------------- | ---------------------------- | ------ |
+| potion-base-8M + FAISS | 8.8M passages, 6,980 queries | 0.125  |
+
+When I reviewed the ranked passages manually however, they were intuitive: noticeably less accurate than sbert but good nonetheless. I think the problem with MRR and MSMARCO is that the "selected" passages capture more than just semantic relevance to the query, they capture the judge's feelings about how authoritative and accurate the passage was. I'm not sure if there's much point continuining with this evaluation.
+
 ## 3. Implement m2v + faiss + max-sim
 
 Later:
 
-- Contextual drift study (which embeddings move a lot? How are movements distributed across tokens?)
+- Contextual drift study (which embeddings move a lot? How are movements
+  distributed across tokens?)

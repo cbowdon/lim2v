@@ -1,14 +1,18 @@
+#!/usr/bin/env python3
+
 import numpy as np
 import pytrec_eval
+from collections import defaultdict
 from faiss import IndexFlatL2, IndexIVFPQ
 from itertools import batched
 from model2vec import StaticModel
 from numpy.typing import NDArray
+from pprint import pprint
 from sentence_transformers import SentenceTransformer
 from typing import Literal
 
 sbert = SentenceTransformer("all-MiniLM-L6-v2")
-potion = StaticModel.from_pretrained("minishlab/potion-base-8M")
+potion = StaticModel.from_pretrained("minishlab/potion-base-8M", normalize=True)
 
 
 def load_passages(*, limit: int | None):
@@ -38,14 +42,7 @@ def sbert_embed(texts: list[str]):
 
 
 def potion_embed(texts: list[str]):
-    return potion.encode(
-        texts,
-        output_value="sentence_embedding",
-        batch_size=32,
-        convert_to_numpy=True,
-        normalize_embeddings=True,
-        show_progress_bar=True,
-    )
+    return potion.encode(texts, show_progress_bar=True)
 
 
 def build_ivfpq_index(embeds, *, dim: int):
@@ -97,18 +94,28 @@ def searcher(
     embeds = embed_fn(passages)
     index = index_fn(embeds, dim=embeds.shape[1])
 
-    def _search(queries: dict[str, str]):
+    def _search(queries: dict[str, str], k: int =10, return_passages: bool=False):
 
         query_ids = list(queries.keys())
         query_texts = list(queries.values())
         query_embeddings = embed_fn(query_texts)
 
-        D, I = index.search(query_embeddings, 10)  # top-10
+        D, I = index.search(query_embeddings, k)
+
+        results = defaultdict(dict)
+        if return_passages:
+            for i, qid in enumerate(query_ids):
+                for rank, pid_idx in enumerate(I[i]):
+                    pid = pids[pid_idx]
+                    passage = passages[pid_idx]
+                    results[queries[qid]][pid] = passage
+            return results
+
         results = []
         for i, qid in enumerate(query_ids):
             for rank, pid_idx in enumerate(I[i]):
                 pid = pids[pid_idx]
-                score = 1 - D[i][rank]
+                score = D[i][rank]
                 results.append((qid, pid, rank + 1, score.item()))
         return results
 
@@ -135,7 +142,7 @@ def eval_mrr(qrels, run):
     return sum(rrs) / len(rrs)
 
 
-limit = 100_000
+limit = 1_000_000
 
 pids, passages = load_passages(limit=limit)
 
@@ -143,11 +150,18 @@ qrels = load_qrels(pids)
 
 queries = load_queries(qrels)
 
-sbert_search = searcher(pids, passages, sbert_embed, build_flat_index)
+print(f"{len(passages):,} passages, {len(queries):,} queries")
+
+# sbert_search = searcher(pids, passages, sbert_embed, build_flat_index)
 potion_search = searcher(pids, passages, potion_embed, build_flat_index)
 
-results = potion_search(queries)
-results = sbert_search(queries)
+# results = sbert_search(queries)
+results = potion_search(queries, return_passages=False)
+#for k, v in results.items():
+#    print(f"# {k}")
+#    for k_, v_ in v.items():
+#        print(f"-- {k_}: {v_}")
+#assert False  # exit early after debugging
 
 save_run("dense-model", results)
 
