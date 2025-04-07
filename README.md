@@ -37,9 +37,11 @@ The naive run, dropping model2vec (potion) into the same experimental setup, did
 | ---------------------- | ---------------------------- | ------ |
 | potion-base-8M + FAISS | 8.8M passages, 6,980 queries | 0.125  |
 
-When I reviewed the ranked passages manually however, they were intuitive: noticeably less accurate than sbert but good nonetheless. I think the problem with MRR and MSMARCO is that the "selected" passages capture more than just semantic relevance to the query, they capture the judge's feelings about how authoritative and accurate the passage was. I'm not sure if there's much point continuining with this evaluation.
+When I reviewed the ranked passages manually however, they were intuitive: noticeably less accurate than sbert but good nonetheless. I think the problem with MRR and MSMARCO is that the "selected" passages capture more than just semantic relevance to the query, they capture the judge's feelings about how authoritative and accurate the passage was. I will see if MaxSim helps at all, but have lost faith in the dataset's suitability. (_Despite_ this being the dataset and metric used by ColBERT.)
 
 ## 3. Implement m2v + faiss + max-sim
+
+
 
 Later:
 

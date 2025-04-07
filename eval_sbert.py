@@ -142,41 +142,40 @@ def eval_mrr(qrels, run):
     return sum(rrs) / len(rrs)
 
 
-limit = 1_000_000
+if __name__ == "__main__":
+    limit = 1_000_000
 
-pids, passages = load_passages(limit=limit)
+    pids, passages = load_passages(limit=limit)
 
-qrels = load_qrels(pids)
+    qrels = load_qrels(pids)
 
-queries = load_queries(qrels)
+    queries = load_queries(qrels)
 
-print(f"{len(passages):,} passages, {len(queries):,} queries")
+    print(f"{len(passages):,} passages, {len(queries):,} queries")
 
-# sbert_search = searcher(pids, passages, sbert_embed, build_flat_index)
-potion_search = searcher(pids, passages, potion_embed, build_flat_index)
+    # sbert_search = searcher(pids, passages, sbert_embed, build_flat_index)
+    potion_search = searcher(pids, passages, potion_embed, build_flat_index)
 
-# results = sbert_search(queries)
-results = potion_search(queries, return_passages=False)
-#for k, v in results.items():
-#    print(f"# {k}")
-#    for k_, v_ in v.items():
-#        print(f"-- {k_}: {v_}")
-#assert False  # exit early after debugging
+    # results = sbert_search(queries)
+    results = potion_search(queries, return_passages=False)
+    #for k, v in results.items():
+    #    print(f"# {k}")
+    #    for k_, v_ in v.items():
+    #        print(f"-- {k_}: {v_}")
+    #assert False  # exit early after debugging
 
-save_run("dense-model", results)
+    save_run("dense-model", results)
 
+    # Load run file
+    with open(f"results/dense-model.txt") as f:
+        run = pytrec_eval.parse_run(f)
 
-# Load run file
-with open(f"results/dense-model.txt") as f:
-    run = pytrec_eval.parse_run(f)
+    # Evaluate
+    evaluator = pytrec_eval.RelevanceEvaluator(qrels, {"recip_rank"})
+    results = evaluator.evaluate(run)
 
-# Evaluate
-evaluator = pytrec_eval.RelevanceEvaluator(qrels, {"recip_rank"})
-results = evaluator.evaluate(run)
+    # Compute mean
+    mrr = sum([metrics["recip_rank"] for metrics in results.values()]) / len(results)
+    print(f"MRR@10: {mrr:.4f}")
 
-# Compute mean
-mrr = sum([metrics["recip_rank"] for metrics in results.values()]) / len(results)
-print(f"MRR@10: {mrr:.4f}")
-
-
-print(eval_mrr(qrels, run))
+    print(eval_mrr(qrels, run))
