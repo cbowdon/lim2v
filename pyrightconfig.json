@@ -1,0 +1,15 @@
+{
+  "typeCheckingMode": "strict",
+  "exclude": [
+    "scripts/**",
+    "migrations/**"
+  ],
+  "reportMissingImports": "error",
+  "reportUnknownMemberType": "none",
+  "reportMissingTypeStubs": false,
+  "reportUnknownVariableType": "warning",
+  "reportUnknownArgumentType": "warning",
+  "stubPath": "./typings",
+  "pythonVersion": "3.12",
+  "pythonPlatform": "Linux"
+}
