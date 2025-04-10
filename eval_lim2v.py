@@ -87,14 +87,14 @@ def exhaustive_search(Eq: NDArray[np.float32], doc_ids: NDArray[np.int32]):
     return doc_ids[sorting], np.sort(scores)[::-1]
 
 
-def debug(Eq: NDArray[np.float32], passages: str):
-    doc_embs = potion.encode_as_sequence([passage])[0]
-    l2_norm = np.linalg.norm(doc_embs) + 1e-32
-    norm_doc_embs = doc_embs / l2_norm
+def debug(Eq: NDArray[np.float32], passage: str, k: int = 5):
+    doc_toks = potion.tokenize([passage])[0]
+    doc_toks_bow = np.unique(doc_toks)
+    norm_doc_embs = norm_tok_embeds[doc_toks_bow]
     S = np.dot(norm_doc_embs, Eq.T)
     max_sims = S.max(axis=1)
-    doc_toks = potion.tokenize([passage])[0]
-    return doc_toks, max_sims
+    top_toks = max_sims.argsort()[-k:][::-1]
+    return [potion.tokens[doc_toks_bow[i]] for i in top_toks]
 
 
 Eq = embed("how many units of blood in the human body")
@@ -103,6 +103,8 @@ doc_ids = rough_search(Eq)
 doc_ids = np.arange(len(passages), dtype=np.int32)
 
 results = exhaustive_search(Eq, doc_ids)
+
+debug(Eq, passages[53])
 
 df_p[results[0]]
 
