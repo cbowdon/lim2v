@@ -104,8 +104,14 @@ doc_ids = np.arange(len(passages), dtype=np.int32)
 
 results = exhaustive_search(Eq, doc_ids)
 
-debug(Eq, passages[53])
-
 df_p[results[0]]
 
+
+debug(Eq, passages[53])
 # human body blood: [1535, 1309, 1674]
+
+
+w = np.abs(potion.embedding).sum(axis=1)
+tw = np.array(potion.tokens)[w.argsort()]
+
+df_tok_weights = DataFrame(dict(token=tw, weight=np.sort(w)))
