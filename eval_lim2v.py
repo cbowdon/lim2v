@@ -89,7 +89,9 @@ def exhaustive_search(Eq: NDArray[np.float32], doc_ids: NDArray[np.int32]):
 
 def debug(Eq: NDArray[np.float32], passage: str, k: int = 5):
     doc_toks = potion.tokenize([passage])[0]
-    doc_toks_bow = np.unique(doc_toks)
+    doc_toks_bow = np.unique(
+        doc_toks
+    )  # this uniqueness naturally enforced by doc_tok_mat
     norm_doc_embs = norm_tok_embeds[doc_toks_bow]
     S = np.dot(norm_doc_embs, Eq.T)
     max_sims = S.max(axis=1)
@@ -115,3 +117,9 @@ w = np.abs(potion.embedding).sum(axis=1)
 tw = np.array(potion.tokens)[w.argsort()]
 
 df_tok_weights = DataFrame(dict(token=tw, weight=np.sort(w)))
+
+# We can use these weights to assist our rough search - and our max sim
+# For the rough search, we could do some weighted scoring (e.g. wRRF) on the results of all query token searches
+# which presumably will return primarily tokens matching the highest-weighted query token.
+#
+# In max-sim we could do a weighted sum.
