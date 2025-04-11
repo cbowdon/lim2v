@@ -31,19 +31,40 @@ Anserini figures reported also.
 
 ## 2. Eval m2v + faiss
 
-The naive run, dropping model2vec (potion) into the same experimental setup, did not perform well; it was actually worse than the well-tuned BM25.
+The naive run, dropping model2vec (potion) into the same experimental setup, did
+not perform well; it was actually worse than the well-tuned BM25.
 
 | Model                  | Subset                       | MRR@10 |
 | ---------------------- | ---------------------------- | ------ |
 | potion-base-8M + FAISS | 8.8M passages, 6,980 queries | 0.125  |
 
-When I reviewed the ranked passages manually however, they were intuitive: noticeably less accurate than sbert but good nonetheless. I think the problem with MRR and MSMARCO is that the "selected" passages capture more than just semantic relevance to the query, they capture the judge's feelings about how authoritative and accurate the passage was. I will see if MaxSim helps at all, but have lost faith in the dataset's suitability. (_Despite_ this being the dataset and metric used by ColBERT.)
+When I reviewed the ranked passages manually however, they were intuitive:
+noticeably less accurate than sbert but good nonetheless. I think the problem
+with MRR and MSMARCO is that the "selected" passages capture more than just
+semantic relevance to the query, they capture the judge's feelings about how
+authoritative and accurate the passage was. I will see if MaxSim helps at all,
+but have lost faith in the dataset's suitability. (_Despite_ this being the
+dataset and metric used by ColBERT.)
 
 ## 3. Implement m2v + faiss + max-sim
 
+There were some complexities to this. The sharing of (static) tokens across
+documents means that there are too many doc matches for each token. It was
+necessary to use potion's embedding weightings and reciprocal rank fusion (RRF)
+to re-score the results of the initial token search and prune it quite
+aggressively.
 
+Due to seg faults from pytorch (why?!) it was necessary to do all the exhaustive
+searching on CPU, and so to maintain performance a smaller set of documents had
+to be selected for exhaustive matching compared to ColBERT (100 vs 1000).
 
-Later:
+So it performs worse than the sentence embeddings. We can investigate this.
+
+| Model                        | Subset                       | MRR@10 |
+| ---------------------------- | ---------------------------- | ------ |
+| potion-base-8M + FAISS + m2v | 8.8M passages, 6,980 queries | 0.090  |
+
+## Later:
 
 - Contextual drift study (which embeddings move a lot? How are movements
   distributed across tokens?)
