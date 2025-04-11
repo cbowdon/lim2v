@@ -54,15 +54,12 @@ necessary to use potion's embedding weightings and reciprocal rank fusion (RRF)
 to re-score the results of the initial token search and prune it quite
 aggressively.
 
-Due to seg faults from pytorch (why?!) it was necessary to do all the exhaustive
-searching on CPU, and so to maintain performance a smaller set of documents had
-to be selected for exhaustive matching compared to ColBERT (100 vs 1000).
+It's difficult to get down to 1000 documents though: when the search corpus is
+>1M docs, it can take 7s for exhaustive search. Need to work on this.
 
-So it performs worse than the sentence embeddings. We can investigate this.
-
-| Model                        | Subset                       | MRR@10 |
-| ---------------------------- | ---------------------------- | ------ |
-| potion-base-8M + FAISS + m2v | 8.8M passages, 6,980 queries | 0.090  |
+| Model                        | Subset                    | MRR@10 |
+| ---------------------------- | ------------------------- | ------ |
+| potion-base-8M + FAISS + m2v | 100k passages, 34 queries | 0.20   |
 
 ## Later:
 

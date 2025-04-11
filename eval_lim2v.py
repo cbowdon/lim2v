@@ -42,18 +42,18 @@ print("Creating FAISS index")
 faiss_index = IndexFlatL2(potion.dim)
 faiss_index.add(norm_tok_embeds)
 
-limit = None
+limit = 100_000
 
 print("Loading passages")
 pids, passages = load_passages(limit=limit)
-df_p = DataFrame({"pid": pids, "passage": passages})
+# df_p = DataFrame({"pid": pids, "passage": passages})
 
-print("Creating doc tok mat")
+print("Creating doc tok mat")  # takes about 20 mins for the whole thing
 doc_tok_mat = lil_matrix((len(passages), len(potion.tokens)), dtype=np.int32)
 batch_size = 64
 for i, batch in enumerate(batched(tqdm(passages), n=batch_size)):
     for j, toks in enumerate(potion.tokenize(batch)):
-        doc_tok_mat[j * batch_size + i, toks] = 1
+        doc_tok_mat[i * batch_size + j, toks] = 1
 doc_tok_mat = doc_tok_mat.tocsc()  # more efficient for wide sparse matrices
 
 
@@ -89,7 +89,7 @@ def rrf(
 
 
 def rough_search(
-    Eq: NDArray[np.float32], *, k: int = 10, weights: NDArray[np.float32] | None
+    Eq: NDArray[np.float32], *, k: int = 5, weights: NDArray[np.float32] | None
 ) -> NDArray[np.int32]:
     D, I = faiss_index.search(Eq, k)
     ranked_toks = rrf(I, weights=weights)[:k]
@@ -153,14 +153,15 @@ def debug(Eq: NDArray[np.float32], passage: str, k: int = 5):
     return [potion.tokens[doc_toks_bow[i]] for i in top_toks]
 
 
-# query = "how many units of blood in the human body"
+# query = "how long do you keep credit card statements"
 # Eq = embed(query)
+# weights = query_weights(query)
 
-# doc_ids = rough_search(Eq, weights=query_weights(query))
+# doc_ids = rough_search(Eq, weights=weights)
 
 # results = exhaustive_search(Eq, doc_ids)
 
-# df_p[results[0]]
+# df_p[results["id"]]
 
 
 # debug(Eq, passages[53])
@@ -177,19 +178,20 @@ for qid, query in tqdm(queries.items()):
     times = [("t0", time.perf_counter())]
     Eq = embed(query)
     times.append(("embed", time.perf_counter()))
-    doc_ids = rough_search(Eq, weights=query_weights(query))[:100]
+    doc_ids = rough_search(Eq, weights=query_weights(query))
     times.append((f"rough {len(doc_ids):,}", time.perf_counter()))
     matches = exhaustive_search(Eq, doc_ids)[:k]
     times.append(("exhaustive", time.perf_counter()))
     for rank, (pid, score) in enumerate(matches):
         results.append((qid, pid.item(), rank + 1, score.item()))
     times = list(reversed(times))
-    #print([(name, t1 - t0) for (name, t1), (_, t0) in zip(times, times[1:])])
+    # print(qid, qrels[qid], matches["id"])
+    # print([(name, t1 - t0) for (name, t1), (_, t0) in zip(times, times[1:])])
 
 print("Saving and evaluating")
 save_run("lim2v", results)
 
-with open(f"results/dense-model.txt") as f:
+with open(f"results/lim2v.txt") as f:
     run = pytrec_eval.parse_run(f)
 
 evaluator = pytrec_eval.RelevanceEvaluator(qrels, {"recip_rank"})
