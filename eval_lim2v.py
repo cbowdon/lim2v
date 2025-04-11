@@ -17,6 +17,7 @@ Then go to exhaustive approach
 
 import numpy as np
 import pytrec_eval
+import time
 from collections import defaultdict
 from faiss import IndexFlatL2
 from itertools import batched
@@ -25,7 +26,7 @@ from numpy.typing import NDArray
 from polars import DataFrame
 from scipy.sparse import lil_matrix
 from tqdm import tqdm
-from eval_sbert import load_passages, load_qrels, load_queries, eval_mrr, save_run
+from lim2v.eval import *
 
 print("Loading model")
 potion = StaticModel.from_pretrained("minishlab/potion-base-8M", normalize=True)
@@ -41,7 +42,7 @@ print("Creating FAISS index")
 faiss_index = IndexFlatL2(potion.dim)
 faiss_index.add(norm_tok_embeds)
 
-limit = 100_000
+limit = None
 
 print("Loading passages")
 pids, passages = load_passages(limit=limit)
@@ -124,8 +125,12 @@ def get_doc_tok_mat(
 
 def exhaustive_search(Eq: NDArray[np.float32], doc_ids: NDArray[np.int32]):
     D = get_doc_tok_mat(doc_ids, minlen=Eq.shape[0])
+
+    # Eq = torch.tensor(Eq, device="mps")
+    # D = torch.tensor(D, device="mps")
+
     D_flat = D.reshape(-1, D.shape[2])
-    S_flat = np.dot(D_flat, Eq.T)
+    S_flat = D_flat @ Eq.T
     S = S_flat.reshape(D.shape[0], D.shape[1], Eq.shape[0])
     max_sims = S.max(axis=1)  # n_docs x n_query_toks
     scores = max_sims.sum(axis=1)  # n_docs
@@ -169,11 +174,17 @@ print("Running queries")
 k = 10
 results = []
 for qid, query in tqdm(queries.items()):
+    times = [("t0", time.perf_counter())]
     Eq = embed(query)
-    doc_ids = rough_search(Eq, weights=query_weights(query))
+    times.append(("embed", time.perf_counter()))
+    doc_ids = rough_search(Eq, weights=query_weights(query))[:100]
+    times.append((f"rough {len(doc_ids):,}", time.perf_counter()))
     matches = exhaustive_search(Eq, doc_ids)[:k]
+    times.append(("exhaustive", time.perf_counter()))
     for rank, (pid, score) in enumerate(matches):
         results.append((qid, pid.item(), rank + 1, score.item()))
+    times = list(reversed(times))
+    #print([(name, t1 - t0) for (name, t1), (_, t0) in zip(times, times[1:])])
 
 print("Saving and evaluating")
 save_run("lim2v", results)
@@ -181,7 +192,6 @@ save_run("lim2v", results)
 with open(f"results/dense-model.txt") as f:
     run = pytrec_eval.parse_run(f)
 
-    # Evaluate
 evaluator = pytrec_eval.RelevanceEvaluator(qrels, {"recip_rank"})
 results = evaluator.evaluate(run)
 

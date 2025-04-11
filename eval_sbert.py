@@ -10,24 +10,10 @@ from numpy.typing import NDArray
 from pprint import pprint
 from sentence_transformers import SentenceTransformer
 from typing import Literal
+from lim2v.eval import *
 
 sbert = SentenceTransformer("all-MiniLM-L6-v2")
 potion = StaticModel.from_pretrained("minishlab/potion-base-8M", normalize=True)
-
-
-def load_passages(*, limit: int | None):
-    passage_ids = []
-    passages = []
-    with open("collections/msmarco-passage/collection.tsv") as f:
-        for i, line in enumerate(f):
-            if (
-                limit is not None and i >= limit
-            ):  # For demo/testing, use a subset. Remove for full run.
-                break
-            pid, text = line.strip().split("\t")
-            passage_ids.append(pid)
-            passages.append(text)
-    return passage_ids, passages
 
 
 def sbert_embed(texts: list[str]):
@@ -64,27 +50,6 @@ def build_flat_index(embeds, *, dim: int):
     return index
 
 
-def load_qrels(pids):
-    qrels = {}
-    pidset = set(pids)
-    with open("collections/msmarco-passage/qrels.dev.small.tsv") as f:
-        for line in f:
-            qid, _, pid, relevance = line.strip().split("\t")
-            if pid in pidset:
-                qrels[qid] = {pid: int(relevance)}
-    return qrels
-
-
-def load_queries(qrels):
-    queries = {}
-    with open("collections/msmarco-passage/queries.dev.small.tsv") as f:
-        for line in f:
-            qid, query = line.strip().split("\t")
-            if qid in qrels:
-                queries[qid] = query
-    return queries
-
-
 def searcher(
     pids: list[int],
     passages: list[str],
@@ -94,7 +59,7 @@ def searcher(
     embeds = embed_fn(passages)
     index = index_fn(embeds, dim=embeds.shape[1])
 
-    def _search(queries: dict[str, str], k: int =10, return_passages: bool=False):
+    def _search(queries: dict[str, str], k: int = 10, return_passages: bool = False):
 
         query_ids = list(queries.keys())
         query_texts = list(queries.values())
@@ -122,26 +87,6 @@ def searcher(
     return _search
 
 
-def save_run(model_name: str, results: list[tuple[str, str, int, float]]):
-    with open(f"results/{model_name}.txt", "w") as fout:
-        for qid, pid, rank, score in results:
-            fout.write(f"{qid} Q0 {pid} {rank} {score} {model_name}\n")
-
-
-def eval_mrr(qrels, run):
-    rrs = []
-    for qid, qrel in qrels.items():
-        if qid in run:
-            for i, pid in enumerate(run[qid].keys()):
-                if pid in qrel:
-                    rank = i + 1
-                    rrs.append(1.0 / rank)
-                    break
-            else:
-                rrs.append(0.0)
-    return sum(rrs) / len(rrs)
-
-
 if __name__ == "__main__":
     limit = 1_000_000
 
@@ -158,11 +103,11 @@ if __name__ == "__main__":
 
     # results = sbert_search(queries)
     results = potion_search(queries, return_passages=False)
-    #for k, v in results.items():
+    # for k, v in results.items():
     #    print(f"# {k}")
     #    for k_, v_ in v.items():
     #        print(f"-- {k_}: {v_}")
-    #assert False  # exit early after debugging
+    # assert False  # exit early after debugging
 
     save_run("dense-model", results)
 
