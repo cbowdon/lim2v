@@ -1,4 +1,20 @@
+"""
+ColBERT approach:
+
+Exhaustively:
+3 dimensional tensor of k document embedding matrices, D
+compute batch dot product of Eq and D
+max pool docs
+sum over Eq
+
+Pruning way:
+Maintain mapping of embedding to doc
+Faiss to get the unique docs
+Then go to exhaustive approach
+"""
+
 import numpy as np
+from collections import defaultdict
 from faiss import IndexFlatL2
 from model2vec import StaticModel
 from numpy.typing import NDArray
@@ -19,16 +35,9 @@ limit = 10_000
 pids, passages = load_passages(limit=limit)
 df_p = DataFrame({"pid": pids, "passage": passages})
 
-# Exhaustively:
-# 3 dimensional tensor of k document embedding matrices, D
-# compute batch dot product of Eq and D
-# max pool docs
-# sum over Eq
-#
-# Pruning way:
-# Maintain mapping of embedding to doc
-# Faiss to get the unique docs
-# Then go to exhaustive approach
+WEIGHTS = np.abs(potion.embedding).sum(axis=1)
+# tw = np.array(potion.tokens)[w.argsort()]
+# df_tok_weights = DataFrame(dict(token=tw, weight=np.sort(w)))
 
 doc_tok_mat = lil_matrix((len(passages), len(potion.tokens)), dtype=np.int32)
 for i, toks in enumerate(potion.tokenize(passages)):
@@ -42,11 +51,37 @@ def embed(query: str) -> NDArray[np.float32]:
     return qembeds / qembed_norm
 
 
-def rough_search(Eq: NDArray[np.float32], k: int = 5) -> NDArray[np.int32]:
-    """With non-contextualised embeddings, this is less useful because of high overlap - needs weighting/pruning."""
+def query_weights(query: str) -> NDArray[np.float32]:
+    toks = potion.tokenize([query])[0]
+    return WEIGHTS[toks] / WEIGHTS.max()
+
+
+def rrf(
+    I: NDArray[np.int32], *, weights: NDArray[np.float32] | None = None
+) -> NDArray[np.int32]:
+    if weights is None:
+        weights = np.ones(I.shape[0])
+
+    # sum (w / k + r_i(d)) over d over i
+    k = 60  # it just is
+    doc_scores = defaultdict(int)
+    for i, resultset in enumerate(I):
+        for rank, doc in enumerate(resultset):
+            doc_scores[doc] += weights[i] / (k + rank + 1)
+
+    results = np.array(
+        sorted(doc_scores.items(), key=lambda x: x[1], reverse=True),
+        dtype=[("id", "<i4"), ("score", "<f4")],
+    )
+    return results["id"]
+
+
+def rough_search(
+    Eq: NDArray[np.float32], *, k: int = 10, weights: NDArray[np.float32] | None
+) -> NDArray[np.int32]:
     D, I = faiss_index.search(Eq, k)
-    all_toks = np.unique(np.ravel(I))
-    doc_idxs, _ = np.nonzero(doc_tok_mat[:, all_toks])
+    ranked_toks = rrf(I, weights=weights)[:k]
+    doc_idxs, _ = np.nonzero(doc_tok_mat[:, ranked_toks])
     result = np.unique(doc_idxs)
     return np.sort(result)
 
@@ -99,9 +134,10 @@ def debug(Eq: NDArray[np.float32], passage: str, k: int = 5):
     return [potion.tokens[doc_toks_bow[i]] for i in top_toks]
 
 
-Eq = embed("how many units of blood in the human body")
+query = "how many units of blood in the human body"
+Eq = embed(query)
 
-doc_ids = rough_search(Eq)
+doc_ids = rough_search(Eq, weights=query_weights(query))
 doc_ids = np.arange(len(passages), dtype=np.int32)
 
 results = exhaustive_search(Eq, doc_ids)
@@ -112,11 +148,6 @@ df_p[results[0]]
 debug(Eq, passages[53])
 # human body blood: [1535, 1309, 1674]
 
-
-w = np.abs(potion.embedding).sum(axis=1)
-tw = np.array(potion.tokens)[w.argsort()]
-
-df_tok_weights = DataFrame(dict(token=tw, weight=np.sort(w)))
 
 # We can use these weights to assist our rough search - and our max sim
 # For the rough search, we could do some weighted scoring (e.g. wRRF) on the results of all query token searches
