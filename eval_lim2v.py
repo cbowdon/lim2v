@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 """
 ColBERT approach:
 
@@ -14,34 +16,43 @@ Then go to exhaustive approach
 """
 
 import numpy as np
+import pytrec_eval
 from collections import defaultdict
 from faiss import IndexFlatL2
+from itertools import batched
 from model2vec import StaticModel
 from numpy.typing import NDArray
 from polars import DataFrame
 from scipy.sparse import lil_matrix
-from eval_sbert import load_passages, load_qrels, load_queries
+from tqdm import tqdm
+from eval_sbert import load_passages, load_qrels, load_queries, eval_mrr, save_run
 
+print("Loading model")
 potion = StaticModel.from_pretrained("minishlab/potion-base-8M", normalize=True)
 
 l2_norm = np.linalg.norm(potion.embedding, axis=1, keepdims=True) + 1e-32
 norm_tok_embeds = potion.embedding / l2_norm
 
-faiss_index = IndexFlatL2(potion.dim)
-faiss_index.add(norm_tok_embeds)
-
-limit = 10_000
-
-pids, passages = load_passages(limit=limit)
-df_p = DataFrame({"pid": pids, "passage": passages})
-
 WEIGHTS = np.abs(potion.embedding).sum(axis=1)
 # tw = np.array(potion.tokens)[w.argsort()]
 # df_tok_weights = DataFrame(dict(token=tw, weight=np.sort(w)))
 
+print("Creating FAISS index")
+faiss_index = IndexFlatL2(potion.dim)
+faiss_index.add(norm_tok_embeds)
+
+limit = 100_000
+
+print("Loading passages")
+pids, passages = load_passages(limit=limit)
+df_p = DataFrame({"pid": pids, "passage": passages})
+
+print("Creating doc tok mat")
 doc_tok_mat = lil_matrix((len(passages), len(potion.tokens)), dtype=np.int32)
-for i, toks in enumerate(potion.tokenize(passages)):
-    doc_tok_mat[i, toks] = 1
+batch_size = 64
+for i, batch in enumerate(batched(tqdm(passages), n=batch_size)):
+    for j, toks in enumerate(potion.tokenize(batch)):
+        doc_tok_mat[j * batch_size + i, toks] = 1
 doc_tok_mat = doc_tok_mat.tocsc()  # more efficient for wide sparse matrices
 
 
@@ -119,7 +130,10 @@ def exhaustive_search(Eq: NDArray[np.float32], doc_ids: NDArray[np.int32]):
     max_sims = S.max(axis=1)  # n_docs x n_query_toks
     scores = max_sims.sum(axis=1)  # n_docs
     sorting = scores.argsort()[::-1]
-    return doc_ids[sorting], np.sort(scores)[::-1]
+    return np.array(
+        list(zip(doc_ids[sorting], np.sort(scores)[::-1])),
+        dtype=[("id", "<i4"), ("score", "<f4")],
+    )
 
 
 def debug(Eq: NDArray[np.float32], passage: str, k: int = 5):
@@ -134,23 +148,44 @@ def debug(Eq: NDArray[np.float32], passage: str, k: int = 5):
     return [potion.tokens[doc_toks_bow[i]] for i in top_toks]
 
 
-query = "how many units of blood in the human body"
-Eq = embed(query)
+# query = "how many units of blood in the human body"
+# Eq = embed(query)
 
-doc_ids = rough_search(Eq, weights=query_weights(query))
-doc_ids = np.arange(len(passages), dtype=np.int32)
+# doc_ids = rough_search(Eq, weights=query_weights(query))
 
-results = exhaustive_search(Eq, doc_ids)
+# results = exhaustive_search(Eq, doc_ids)
 
-df_p[results[0]]
+# df_p[results[0]]
 
 
-debug(Eq, passages[53])
+# debug(Eq, passages[53])
 # human body blood: [1535, 1309, 1674]
 
+print("Loading queries")
+qrels = load_qrels(pids)
+queries = load_queries(qrels)
 
-# We can use these weights to assist our rough search - and our max sim
-# For the rough search, we could do some weighted scoring (e.g. wRRF) on the results of all query token searches
-# which presumably will return primarily tokens matching the highest-weighted query token.
-#
-# In max-sim we could do a weighted sum.
+print("Running queries")
+k = 10
+results = []
+for qid, query in tqdm(queries.items()):
+    Eq = embed(query)
+    doc_ids = rough_search(Eq, weights=query_weights(query))
+    matches = exhaustive_search(Eq, doc_ids)[:k]
+    for rank, (pid, score) in enumerate(matches):
+        results.append((qid, pid.item(), rank + 1, score.item()))
+
+print("Saving and evaluating")
+save_run("lim2v", results)
+
+with open(f"results/dense-model.txt") as f:
+    run = pytrec_eval.parse_run(f)
+
+    # Evaluate
+evaluator = pytrec_eval.RelevanceEvaluator(qrels, {"recip_rank"})
+results = evaluator.evaluate(run)
+
+mrr = sum([metrics["recip_rank"] for metrics in results.values()]) / len(results)
+print(f"MRR@10: {mrr:.4f}")
+
+print(eval_mrr(qrels, run))

@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import pytrec_eval
 from pyserini.search import get_qrels_file, get_topics
 from pyserini.search.lucene import LuceneSearcher
