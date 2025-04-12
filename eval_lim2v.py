@@ -19,7 +19,7 @@ import numpy as np
 import pytrec_eval
 import time
 from collections import defaultdict
-from faiss import IndexFlatL2
+from faiss import IndexFlatIP
 from itertools import batched
 from model2vec import StaticModel
 from numpy.typing import NDArray
@@ -39,10 +39,11 @@ WEIGHTS = np.abs(potion.embedding).sum(axis=1)
 # df_tok_weights = DataFrame(dict(token=tw, weight=np.sort(w)))
 
 print("Creating FAISS index")
-faiss_index = IndexFlatL2(potion.dim)
+# ColBERT used - L2 squared distance, but we have need of positive scores
+faiss_index = IndexFlatIP(potion.dim)
 faiss_index.add(norm_tok_embeds)
 
-limit = 100_000
+limit = 1_000_000
 
 print("Loading passages")
 pids, passages = load_passages(limit=limit)
@@ -88,14 +89,24 @@ def rrf(
     return results["id"]
 
 
-def rough_search(
-    Eq: NDArray[np.float32], *, k: int = 5, weights: NDArray[np.float32] | None
+def roughish_search(
+    Eq: NDArray[np.float32], *, k: int = 100, weights: NDArray[np.float32] | None = None
 ) -> NDArray[np.int32]:
-    D, I = faiss_index.search(Eq, k)
-    ranked_toks = rrf(I, weights=weights)[:k]
-    doc_idxs, _ = np.nonzero(doc_tok_mat[:, ranked_toks])
-    result = np.unique(doc_idxs)
-    return np.sort(result)
+    if weights is None:
+        weights = np.ones(Eq.shape[0])
+    D, I = faiss_index.search(Eq, k // 2)
+    # we do a rough estimate of the maximum similarity
+    doc_scores = defaultdict(int)
+    for i in range(I.shape[0]):
+        for j in range(I.shape[1]):
+            doc_idxs, _ = np.nonzero(doc_tok_mat[:, I[i, j]])
+            for doc in doc_idxs:
+                # ignoring the "max" part, this can accumulate
+                doc_scores[doc] += weights[i] * D[i, j]
+
+    docs = np.array(list(doc_scores.keys()))
+    scores = np.array(list(doc_scores.values()))
+    return docs[scores.argsort()][-k:]
 
 
 def pad_embeds(E: NDArray[np.float32], target: int) -> NDArray[np.float32]:
@@ -178,7 +189,7 @@ for qid, query in tqdm(queries.items()):
     times = [("t0", time.perf_counter())]
     Eq = embed(query)
     times.append(("embed", time.perf_counter()))
-    doc_ids = rough_search(Eq, weights=query_weights(query))
+    doc_ids = roughish_search(Eq, weights=query_weights(query))
     times.append((f"rough {len(doc_ids):,}", time.perf_counter()))
     matches = exhaustive_search(Eq, doc_ids)[:k]
     times.append(("exhaustive", time.perf_counter()))
