@@ -56,12 +56,13 @@ initial token search and prune it quite aggressively.
 | Model                        | Subset                    | MRR@10 |
 | ---------------------------- | ------------------------- | ------ |
 | potion-base-8M + FAISS + m2v | 100k passages, 34 queries | 0.20   |
+| potion-base-8M + FAISS + m2v | 1M passages, 238 queries  | 0.11   |
 
-Problems to solve:
+The approach has two main problems:
 
-- too slow (due to rough search doc hits being extremely high)
-- rough search has very poor recall so the scores drop-off rapidly as subset is
-  increased
+1. The initial rough search is too slow and has poor recall due to the large number of document hits.
+2. The "selected" passages of MSMARCO are frequently hard to justify over non-selected passages.
+
 
 ## Later:
 

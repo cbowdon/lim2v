@@ -195,8 +195,7 @@ def exhaustive_search(
     S_flat = D_flat @ Eq.T
     S = S_flat.reshape(D.shape[0], D.shape[1], Eq.shape[0])
     max_sims = S.max(axis=1)  # n_docs x n_query_toks
-    max_sims = max_sims * weights
-    scores = max_sims.sum(axis=1)  # n_docs
+    scores = (weights * max_sims).sum(axis=1)  # n_docs
     sorting = scores.argsort()[::-1]
     return np.array(
         list(zip(doc_ids[sorting], np.sort(scores)[::-1])),
@@ -219,10 +218,10 @@ def debug(
     )  # this uniqueness naturally enforced by doc_tok_mat
     norm_doc_embs = norm_tok_embeds[doc_toks_bow]
     S = np.dot(norm_doc_embs, Eq.T)
-    S = weights * S
-    max_sims = S.max(axis=1)
-    top_toks = max_sims.argsort()[-k:][::-1]
-    return [potion.tokens[doc_toks_bow[i]] for i in top_toks]
+    sims = S.max(axis=0)
+    most_sim = S.argmax(axis=0)
+    toks = [potion.tokens[i] for i in doc_toks_bow[most_sim]]
+    return DataFrame(dict(tok=toks, sim=sims, score=weights * sims))
 
 
 # query = "how long do you keep credit card statements"
@@ -259,6 +258,8 @@ for qid, query in tqdm(queries.items()):
     _times.append((qid, "rough", time.perf_counter()))
     matches = exhaustive_search(Eq, doc_ids, weights)[:10]  # for MRR@10
     was_in_exhau.append(expected in [m[0] for m in matches])
+    if was_in_rough[-1] and not was_in_exhau[-1]:
+        break
     _times.append((qid, "exhaustive", time.perf_counter()))
     for rank, (pid, score) in enumerate(matches):
         results.append((qid, pid.item(), rank + 1, score.item()))
