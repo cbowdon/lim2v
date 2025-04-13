@@ -128,6 +128,11 @@ def rough_search(
     return np.sort(result)
 
 
+def get_docs_for_toks(toks: int | np.int32 | NDArray[np.int32]) -> NDArray[np.int32]:
+    doc_idxs, _ = np.nonzero(doc_tok_mat[:, toks])
+    return doc_idxs
+
+
 def roughish_search(
     Eq: NDArray[np.float32], *, k: int = 100, weights: NDArray[np.float32] | None = None
 ) -> NDArray[np.int32]:
@@ -135,17 +140,20 @@ def roughish_search(
         weights = np.ones(Eq.shape[0])
     D, I = faiss_index.search(Eq, k // 2)
     # we do a rough estimate of the maximum similarity
-    doc_scores = defaultdict(int)
+    doc_scores = defaultdict(float)
     for i in range(I.shape[0]):
+        i_scores = {}
         for j in range(I.shape[1]):
-            doc_idxs, _ = np.nonzero(doc_tok_mat[:, I[i, j]])
+            doc_idxs = get_docs_for_toks(I[i, j])
             for doc in doc_idxs:
-                # ignoring the "max" part, this can accumulate
-                doc_scores[doc] += weights[i] * D[i, j]
+                if doc not in i_scores:
+                    i_scores[doc] = weights[i] / (60 + j + 1)
+        for doc, score in i_scores.items():
+            doc_scores[doc] += score
 
     docs = np.array(list(doc_scores.keys()))
     scores = np.array(list(doc_scores.values()))
-    return docs[scores.argsort()][-k:]
+    return docs[scores.argsort()][-k:][::-1]
 
 
 def pad_embeds(E: NDArray[np.float32], target: int) -> NDArray[np.float32]:
@@ -175,10 +183,6 @@ def get_doc_tok_mat(
 
 def exhaustive_search(Eq: NDArray[np.float32], doc_ids: NDArray[np.int32]):
     D = get_doc_tok_mat(doc_ids, minlen=Eq.shape[0])
-
-    # Eq = torch.tensor(Eq, device="mps")
-    # D = torch.tensor(D, device="mps")
-
     D_flat = D.reshape(-1, D.shape[2])
     S_flat = D_flat @ Eq.T
     S = S_flat.reshape(D.shape[0], D.shape[1], Eq.shape[0])
@@ -227,17 +231,15 @@ was_in_rough = []
 was_in_exhau = []
 times = []
 for qid, query in tqdm(queries.items()):
-    expected = [int(k) for k, v in qrels[qid].items() if v == 1]
-    if len(expected) == 0:
-        raise Exception(qid)
+    expected = [int(k) for k, v in qrels[qid].items() if v == 1][0]
     _times = [(qid, "t0", time.perf_counter())]
     Eq = embed(query)
     _times.append((qid, "embed", time.perf_counter()))
     doc_ids = roughish_search(Eq, weights=query_weights(query))
-    was_in_rough.append(expected[0] in doc_ids)
+    was_in_rough.append(expected in doc_ids)
     _times.append((qid, "rough", time.perf_counter()))
     matches = exhaustive_search(Eq, doc_ids)[:10]  # for MRR@10
-    was_in_exhau.append(expected[0] in [m[0] for m in matches])
+    was_in_exhau.append(expected in [m[0] for m in matches])
     _times.append((qid, "exhaustive", time.perf_counter()))
     for rank, (pid, score) in enumerate(matches):
         results.append((qid, pid.item(), rank + 1, score.item()))
