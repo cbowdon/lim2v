@@ -54,12 +54,15 @@ necessary to use potion's embedding weightings and reciprocal rank fusion (RRF)
 to re-score the results of the initial token search and prune it quite
 aggressively.
 
-It's difficult to get down to 1000 documents though: when the search corpus is
->1M docs, it can take 7s for exhaustive search. Need to work on this.
-
 | Model                        | Subset                    | MRR@10 |
 | ---------------------------- | ------------------------- | ------ |
 | potion-base-8M + FAISS + m2v | 100k passages, 34 queries | 0.20   |
+
+Problems to solve:
+
+- too slow (due to rough search being slow)
+- rough search has very poor recall so the scores drop-off rapidly as subset is
+  increased
 
 ## Later:
 

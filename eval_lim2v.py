@@ -23,7 +23,7 @@ from faiss import IndexFlatIP
 from itertools import batched
 from model2vec import StaticModel
 from numpy.typing import NDArray
-from polars import DataFrame
+from polars import DataFrame, col
 from scipy.sparse import lil_matrix
 from tqdm import tqdm
 from lim2v.eval import *
@@ -31,10 +31,19 @@ from lim2v.eval import *
 print("Loading model")
 potion = StaticModel.from_pretrained("minishlab/potion-base-8M", normalize=True)
 
+WEIGHTS = np.abs(potion.embedding).sum(axis=1)
+
+WEIGHTS_MIN = 300
+STOP_TOKS = {t.item() for t in np.where(WEIGHTS < WEIGHTS_MIN)[0]}
+# This rough cut-off chosen manually. Omits these tokens:
+# ['[PAD]', '[UNK]', '[CLS]', '[SEP]', '[MASK]', '!', '"', '#', '&', "'", '(', ')', '*', ',', '-', '.', '/',
+# '1', '2', ':', ';', '>', '?', '_', 'a', 'i', 's', 't', '’', 'the', 'of', 'and', 'in', 'to', 'was', 'is',
+# 'as', 'for', 'on', 'with', 'that', 'it', 'by', 'at', 'from', '##s', 'you', 'an', 'be', 'this', 'are', 'my',
+# 'one', 'or', 'have', 'all', 'has', 'we', 'more', 'can', 'will', 'your', 'our']
+
 l2_norm = np.linalg.norm(potion.embedding, axis=1, keepdims=True) + 1e-32
 norm_tok_embeds = potion.embedding / l2_norm
 
-WEIGHTS = np.abs(potion.embedding).sum(axis=1)
 # tw = np.array(potion.tokens)[w.argsort()]
 # df_tok_weights = DataFrame(dict(token=tw, weight=np.sort(w)))
 
@@ -43,7 +52,7 @@ print("Creating FAISS index")
 faiss_index = IndexFlatIP(potion.dim)
 faiss_index.add(norm_tok_embeds)
 
-limit = 100_000
+limit = 1_000_000
 
 print("Loading passages")
 pids, passages = load_passages(limit=limit)
@@ -59,13 +68,15 @@ doc_tok_mat = doc_tok_mat.tocsc()  # more efficient for wide sparse matrices
 
 
 def embed(query: str) -> NDArray[np.float32]:
-    qembeds = potion.encode_as_sequence(query)
-    qembed_norm = np.linalg.norm(qembeds, axis=1, keepdims=True) + 1e-32
-    return qembeds / qembed_norm
+    toks = potion.tokenize([query])[0]
+    toks = [tok for tok in toks if tok not in STOP_TOKS]
+    qembeds = norm_tok_embeds[toks]
+    return qembeds
 
 
 def query_weights(query: str) -> NDArray[np.float32]:
     toks = potion.tokenize([query])[0]
+    toks = [tok for tok in toks if tok not in STOP_TOKS]
     return WEIGHTS[toks] / WEIGHTS.max()
 
 
@@ -193,21 +204,40 @@ qrels = load_qrels(pids)
 queries = load_queries(qrels)
 
 print("Running queries")
-k = 10
 results = []
+was_in_rough = []
+was_in_exhau = []
+times = []
 for qid, query in tqdm(queries.items()):
-    times = [("t0", time.perf_counter())]
+    expected = [int(k) for k, v in qrels[qid].items() if v == 1]
+    if len(expected) == 0:
+        raise Exception(qid)
+    _times = [(qid, "t0", time.perf_counter())]
     Eq = embed(query)
-    times.append(("embed", time.perf_counter()))
+    _times.append((qid, "embed", time.perf_counter()))
     doc_ids = roughish_search(Eq, weights=query_weights(query))
-    times.append((f"rough {len(doc_ids):,}", time.perf_counter()))
-    matches = exhaustive_search(Eq, doc_ids)[:k]
-    times.append(("exhaustive", time.perf_counter()))
+    was_in_rough.append(expected[0] in doc_ids)
+    _times.append((qid, "rough", time.perf_counter()))
+    matches = exhaustive_search(Eq, doc_ids)[:10]  # for MRR@10
+    was_in_exhau.append(expected[0] in [m[0] for m in matches])
+    _times.append((qid, "exhaustive", time.perf_counter()))
     for rank, (pid, score) in enumerate(matches):
         results.append((qid, pid.item(), rank + 1, score.item()))
-    times = list(reversed(times))
+    _times = list(reversed(_times))
     # print(qid, qrels[qid], matches["id"])
-    # print([(name, t1 - t0) for (name, t1), (_, t0) in zip(times, times[1:])])
+    times.extend(
+        [
+            (qid, name, t1 - t0)
+            for (qid, name, t1), (_, _, t0) in zip(_times, _times[1:])
+        ]
+    )
+
+df_times = DataFrame(times, schema=["qid", "step", "time_s"], orient="row")
+print(df_times.group_by("step").agg(time_s=col("time_s").mean()))
+
+print(f"Rough: {sum(was_in_rough)}/{len(was_in_rough)}")
+print(f"Exhaustive: {sum(was_in_exhau)}/{len(was_in_exhau)}")
+
 
 print("Saving and evaluating")
 save_run("lim2v", results)
