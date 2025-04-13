@@ -138,7 +138,7 @@ def roughish_search(
 ) -> NDArray[np.int32]:
     if weights is None:
         weights = np.ones(Eq.shape[0])
-    D, I = faiss_index.search(Eq, k // 2)
+    D, I = faiss_index.search(Eq, 10)  # 10 similar tokens is plenty
     # we do a rough estimate of the maximum similarity
     doc_scores = defaultdict(float)
     for i in range(I.shape[0]):
