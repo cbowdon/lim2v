@@ -43,7 +43,7 @@ print("Creating FAISS index")
 faiss_index = IndexFlatIP(potion.dim)
 faiss_index.add(norm_tok_embeds)
 
-limit = 1_000_000
+limit = 100_000
 
 print("Loading passages")
 pids, passages = load_passages(limit=limit)
@@ -87,6 +87,16 @@ def rrf(
         dtype=[("id", "<i4"), ("score", "<f4")],
     )
     return results["id"]
+
+
+def rough_search(
+    Eq: NDArray[np.float32], *, k: int = 5, weights: NDArray[np.float32] | None
+) -> NDArray[np.int32]:
+    D, I = faiss_index.search(Eq, k)
+    ranked_toks = rrf(I, weights=weights)[:k]
+    doc_idxs, _ = np.nonzero(doc_tok_mat[:, ranked_toks])
+    result = np.unique(doc_idxs)
+    return np.sort(result)
 
 
 def roughish_search(
