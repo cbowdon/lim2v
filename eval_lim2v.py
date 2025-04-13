@@ -138,12 +138,14 @@ def roughish_search(
 ) -> NDArray[np.int32]:
     if weights is None:
         weights = np.ones(Eq.shape[0])
-    D, I = faiss_index.search(Eq, 10)  # 10 similar tokens is plenty
+    D, I = faiss_index.search(Eq, 5)  # only need a small number of similar tokens
     # we do a rough estimate of the maximum similarity
     doc_scores = defaultdict(float)
     for i in range(I.shape[0]):
         i_scores = {}
         for j in range(I.shape[1]):
+            if D[i, j] < 0.33:
+                break  # bail out, definitely not similar enough
             doc_idxs = get_docs_for_toks(I[i, j])
             for doc in doc_idxs:
                 if doc not in i_scores:
@@ -181,12 +183,19 @@ def get_doc_tok_mat(
     return np.array(D)
 
 
-def exhaustive_search(Eq: NDArray[np.float32], doc_ids: NDArray[np.int32]):
+def exhaustive_search(
+    Eq: NDArray[np.float32],
+    doc_ids: NDArray[np.int32],
+    weights: NDArray[np.float32] | None = None,
+):
+    if weights is None:
+        weights = np.ones(Eq.shape[0])
     D = get_doc_tok_mat(doc_ids, minlen=Eq.shape[0])
     D_flat = D.reshape(-1, D.shape[2])
     S_flat = D_flat @ Eq.T
     S = S_flat.reshape(D.shape[0], D.shape[1], Eq.shape[0])
     max_sims = S.max(axis=1)  # n_docs x n_query_toks
+    max_sims = max_sims * weights
     scores = max_sims.sum(axis=1)  # n_docs
     sorting = scores.argsort()[::-1]
     return np.array(
@@ -195,13 +204,21 @@ def exhaustive_search(Eq: NDArray[np.float32], doc_ids: NDArray[np.int32]):
     )
 
 
-def debug(Eq: NDArray[np.float32], passage: str, k: int = 5):
+def debug(
+    Eq: NDArray[np.float32],
+    passage: str,
+    k: int = 5,
+    weights: NDArray[np.float32] | None = None,
+):
+    if weights is None:
+        weights = np.ones(Eq.shape[0])
     doc_toks = potion.tokenize([passage])[0]
     doc_toks_bow = np.unique(
         doc_toks
     )  # this uniqueness naturally enforced by doc_tok_mat
     norm_doc_embs = norm_tok_embeds[doc_toks_bow]
     S = np.dot(norm_doc_embs, Eq.T)
+    S = weights * S
     max_sims = S.max(axis=1)
     top_toks = max_sims.argsort()[-k:][::-1]
     return [potion.tokens[doc_toks_bow[i]] for i in top_toks]
@@ -269,6 +286,6 @@ evaluator = pytrec_eval.RelevanceEvaluator(qrels, {"recip_rank"})
 results = evaluator.evaluate(run)
 
 mrr = sum([metrics["recip_rank"] for metrics in results.values()]) / len(results)
-print(f"MRR@10: {mrr:.4f}")
+print(f"MRR@10: {mrr:.3f}")
 
-print(eval_mrr(qrels, run))
+print(f"Non-buggy MRR@10: {eval_mrr(qrels, run):.3f}")
