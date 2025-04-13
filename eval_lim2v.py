@@ -99,7 +99,7 @@ def query_weights(query: str) -> NDArray[np.float32]:
 
 
 def rrf(
-    I: NDArray[np.int32], *, weights: NDArray[np.float32] | None = None
+    I: NDArray[np.int32], *, weights: NDArray[np.float32] | None
 ) -> NDArray[np.int32]:
     if weights is None:
         weights = np.ones(I.shape[0])
@@ -134,7 +134,7 @@ def get_docs_for_toks(toks: int | np.int32 | NDArray[np.int32]) -> NDArray[np.in
 
 
 def roughish_search(
-    Eq: NDArray[np.float32], *, k: int = 100, weights: NDArray[np.float32] | None = None
+    Eq: NDArray[np.float32], *, k: int = 100, weights: NDArray[np.float32] | None
 ) -> NDArray[np.int32]:
     if weights is None:
         weights = np.ones(Eq.shape[0])
@@ -186,7 +186,7 @@ def get_doc_tok_mat(
 def exhaustive_search(
     Eq: NDArray[np.float32],
     doc_ids: NDArray[np.int32],
-    weights: NDArray[np.float32] | None = None,
+    weights: NDArray[np.float32] | None,
 ):
     if weights is None:
         weights = np.ones(Eq.shape[0])
@@ -207,8 +207,9 @@ def exhaustive_search(
 def debug(
     Eq: NDArray[np.float32],
     passage: str,
+    *,
+    weights: NDArray[np.float32] | None,
     k: int = 5,
-    weights: NDArray[np.float32] | None = None,
 ):
     if weights is None:
         weights = np.ones(Eq.shape[0])
@@ -228,9 +229,9 @@ def debug(
 # Eq = embed(query)
 # weights = query_weights(query)
 
-# doc_ids = rough_search(Eq, weights=weights)
+# doc_ids = roughish_search(Eq, weights=weights)
 
-# results = exhaustive_search(Eq, doc_ids)
+# results = exhaustive_search(Eq, doc_ids, weights=weights)
 
 # df_p[results["id"]]
 
@@ -251,11 +252,12 @@ for qid, query in tqdm(queries.items()):
     expected = [int(k) for k, v in qrels[qid].items() if v == 1][0]
     _times = [(qid, "t0", time.perf_counter())]
     Eq = embed(query)
+    weights = query_weights(query)
     _times.append((qid, "embed", time.perf_counter()))
-    doc_ids = roughish_search(Eq, weights=query_weights(query))
+    doc_ids = roughish_search(Eq, weights=weights)
     was_in_rough.append(expected in doc_ids)
     _times.append((qid, "rough", time.perf_counter()))
-    matches = exhaustive_search(Eq, doc_ids)[:10]  # for MRR@10
+    matches = exhaustive_search(Eq, doc_ids, weights)[:10]  # for MRR@10
     was_in_exhau.append(expected in [m[0] for m in matches])
     _times.append((qid, "exhaustive", time.perf_counter()))
     for rank, (pid, score) in enumerate(matches):

@@ -50,9 +50,8 @@ dataset and metric used by ColBERT.)
 
 There were some complexities to this. The sharing of (static) tokens across
 documents means that there are too many doc matches for each token. It was
-necessary to use potion's embedding weightings and reciprocal rank fusion (RRF)
-to re-score the results of the initial token search and prune it quite
-aggressively.
+necessary to use potion's embedding weightings to re-score the results of the
+initial token search and prune it quite aggressively.
 
 | Model                        | Subset                    | MRR@10 |
 | ---------------------------- | ------------------------- | ------ |
@@ -60,7 +59,7 @@ aggressively.
 
 Problems to solve:
 
-- too slow (due to rough search being slow)
+- too slow (due to rough search doc hits being extremely high)
 - rough search has very poor recall so the scores drop-off rapidly as subset is
   increased
 
