@@ -12,7 +12,7 @@ topics = get_topics("msmarco-passage-dev-subset")
 
 # Store results in TREC format
 with open("results/bm25_run.txt", "w") as fout:
-    for qid, query in topics.items():
+    for qid, query in tqdm(topics.items(), total=len(topics)):
         hits = searcher.search(query["title"], k=10)
         for rank, hit in enumerate(hits):
             fout.write(f"{qid} Q0 {hit.docid} {rank+1} {hit.score} bm25\n")

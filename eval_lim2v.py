@@ -25,12 +25,14 @@ from itertools import batched
 from model2vec import StaticModel
 from numpy.typing import NDArray
 from polars import DataFrame, col
+from pyserini.search.lucene import LuceneSearcher
 from scipy.sparse import lil_matrix
 from tqdm import tqdm
 from lim2v.eval import *
 
 print("Loading model")
 potion = StaticModel.from_pretrained("minishlab/potion-base-8M", normalize=True)
+searcher = LuceneSearcher.from_prebuilt_index("msmarco-passage")
 
 WEIGHTS = np.abs(potion.embedding).sum(axis=1)
 
@@ -53,10 +55,10 @@ print("Creating FAISS index")
 faiss_index = IndexFlatIP(potion.dim)
 faiss_index.add(norm_tok_embeds)
 
-limit = 1_000_000
+LIMIT = None
 
 print("Loading passages")
-pids, passages = load_passages(limit=limit)
+pids, passages = load_passages(limit=LIMIT)
 # df_p = DataFrame({"pid": pids, "passage": passages})
 
 print("Loading doc tok mat")  # takes about 20 mins for the whole thing
@@ -82,7 +84,7 @@ def load_doc_tok_mat(limit: int | None):
         return doc_tok_mat
 
 
-doc_tok_mat = load_doc_tok_mat(limit)
+doc_tok_mat = load_doc_tok_mat(LIMIT)
 
 
 def embed(query: str) -> NDArray[np.float32]:
@@ -158,6 +160,13 @@ def roughish_search(
     return docs[scores.argsort()][-k:][::-1]
 
 
+def bm25_search(query: str, k: int = 1000) -> NDArray[np.int32]:
+    if LIMIT is None:
+        return np.array([int(hit.docid) for hit in searcher.search(query, k=k)])
+    hits = searcher.search(query, k=LIMIT)
+    return np.array([int(h.docid) for h in hits if int(h.docid) < LIMIT])[:k]
+
+
 def pad_embeds(E: NDArray[np.float32], target: int) -> NDArray[np.float32]:
     n_to_pad = target - E.shape[0]
     if n_to_pad <= 0:
@@ -221,7 +230,7 @@ def debug(
     sims = S.max(axis=0)
     most_sim = S.argmax(axis=0)
     toks = [potion.tokens[i] for i in doc_toks_bow[most_sim]]
-    return DataFrame(dict(tok=toks, sim=sims, score=weights * sims))
+    return DataFrame(dict(tok=toks, sim=sims, weight=weights, score=weights * sims))
 
 
 # query = "how long do you keep credit card statements"
@@ -247,19 +256,20 @@ results = []
 was_in_rough = []
 was_in_exhau = []
 times = []
-for qid, query in tqdm(queries.items()):
+for qid, query in tqdm(list(queries.items())[:50]):
     expected = [int(k) for k, v in qrels[qid].items() if v == 1][0]
     _times = [(qid, "t0", time.perf_counter())]
     Eq = embed(query)
     weights = query_weights(query)
     _times.append((qid, "embed", time.perf_counter()))
-    doc_ids = roughish_search(Eq, weights=weights)
+    # doc_ids = roughish_search(Eq, weights=weights)
+    doc_ids = bm25_search(query)
     was_in_rough.append(expected in doc_ids)
     _times.append((qid, "rough", time.perf_counter()))
     matches = exhaustive_search(Eq, doc_ids, weights)[:10]  # for MRR@10
     was_in_exhau.append(expected in [m[0] for m in matches])
-    if was_in_rough[-1] and not was_in_exhau[-1]:
-        break
+    # if was_in_rough[-1] and not was_in_exhau[-1]:
+    #    break
     _times.append((qid, "exhaustive", time.perf_counter()))
     for rank, (pid, score) in enumerate(matches):
         results.append((qid, pid.item(), rank + 1, score.item()))

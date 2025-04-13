@@ -63,7 +63,6 @@ The approach has two main problems:
 1. The initial rough search is too slow and has poor recall due to the large number of document hits.
 2. The "selected" passages of MSMARCO are frequently hard to justify over non-selected passages.
 
-
 ## Later:
 
 - Contextual drift study (which embeddings move a lot? How are movements
