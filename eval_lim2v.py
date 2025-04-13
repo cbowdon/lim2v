@@ -16,6 +16,7 @@ Then go to exhaustive approach
 """
 
 import numpy as np
+import pickle
 import pytrec_eval
 import time
 from collections import defaultdict
@@ -58,13 +59,30 @@ print("Loading passages")
 pids, passages = load_passages(limit=limit)
 # df_p = DataFrame({"pid": pids, "passage": passages})
 
-print("Creating doc tok mat")  # takes about 20 mins for the whole thing
-doc_tok_mat = lil_matrix((len(passages), len(potion.tokens)), dtype=np.int32)
-batch_size = 64
-for i, batch in enumerate(batched(tqdm(passages), n=batch_size)):
-    for j, toks in enumerate(potion.tokenize(batch)):
-        doc_tok_mat[i * batch_size + j, toks] = 1
-doc_tok_mat = doc_tok_mat.tocsc()  # more efficient for wide sparse matrices
+print("Loading doc tok mat")  # takes about 20 mins for the whole thing
+
+
+def load_doc_tok_mat(limit: int | None):
+    try:
+        cachefile = f"collections/doc_tok_mat-{limit}.pkl"
+        with open(cachefile, "rb") as fin:
+            doc_tok_mat = pickle.load(fin)
+        return doc_tok_mat
+    except:
+
+        doc_tok_mat = lil_matrix((len(passages), len(potion.tokens)), dtype=np.int32)
+        batch_size = 64
+        for i, batch in enumerate(batched(tqdm(passages), n=batch_size)):
+            for j, toks in enumerate(potion.tokenize(batch)):
+                doc_tok_mat[i * batch_size + j, toks] = 1
+        doc_tok_mat = doc_tok_mat.tocsc()  # more efficient for wide sparse matrices
+
+        with open(cachefile, "wb") as fout:
+            pickle.dump(doc_tok_mat, fout)
+        return doc_tok_mat
+
+
+doc_tok_mat = load_doc_tok_mat(limit)
 
 
 def embed(query: str) -> NDArray[np.float32]:
