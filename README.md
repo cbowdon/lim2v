@@ -1,6 +1,39 @@
 # lim2v - can m2v address ColBERT's space usage without compromising accuracy?
 
-## 1. Confirm BM25 baseline
+This was an exploration of whether the "contextualised" part of contextualised
+late-interaction BERT could be completely or partially replaced with weighted
+static embeddings. This would ideally give us a model that exceeds vector search
+with sentence embeddings for retrieval (as does ColBERT) but without the ColBERT
+drawback of high space usage.
+
+N.B. this is the end-to-end retrieval use case of ColBERT, not re-ranking.
+
+## Outcomes
+
+None of the models tried were able to outperform ColBERT on MSMARCO. There were
+two major reasons:
+
+1. MSMARCO passage with MRR@10 is a surprisingly problematic benchmark dataset
+   for IR, despite its widespread usage. On reviewing the data it was easy to
+   find examples of passages that were equivalent or superior to the "selected"
+   passage for each query. As such MRR@10 is not reliable because it considers
+   the rank of the single selected passage in each result set.
+
+   At least one of the selected passages was also obviously false, which might
+   not be directly problematic for the MRR evaluation but does raise questions
+   in the context of retrieving accurate answers.
+
+2. The use of static embeddings for the end-to-end retrieval is worse than BM25.
+   The selected passage was in the initial rough result set only around 50% of
+   the time, severely limiting the achievable score.
+
+_So the reasons are the data, and the model. Sigh._
+
+This prevented properly understanding how much of a benefit we see from the
+contextualisation of embeddings. Clearly it matters, but I would still like to
+know to what extent. Hopefully in future I'll have time to explore more.
+
+## 0. Confirm BM25 baseline
 
 This was very straightforward thanks to Pyserini's pre-compiled indices. I was
 able to reproduce the 0.186 MRR@10 easily.
@@ -46,22 +79,33 @@ authoritative and accurate the passage was. I will see if MaxSim helps at all,
 but have lost faith in the dataset's suitability. (_Despite_ this being the
 dataset and metric used by ColBERT.)
 
-## 3. Implement m2v + faiss + max-sim
+## 3. Implement and eval m2v + faiss + max-sim
 
 There were some complexities to this. The sharing of (static) tokens across
 documents means that there are too many doc matches for each token. It was
 necessary to use potion's embedding weightings to re-score the results of the
 initial token search and prune it quite aggressively.
 
-| Model                        | Subset                    | MRR@10 |
-| ---------------------------- | ------------------------- | ------ |
-| potion-base-8M + FAISS + m2v | 100k passages, 34 queries | 0.20   |
-| potion-base-8M + FAISS + m2v | 1M passages, 238 queries  | 0.11   |
+| Model                            | Subset                    | MRR@10 |
+| -------------------------------- | ------------------------- | ------ |
+| potion-base-8M + FAISS + max sim | 100k passages, 34 queries | 0.20   |
+| potion-base-8M + FAISS + max sim | 1M passages, 238 queries  | 0.11   |
+| potion-base-8M + BM25 + max sim  | 8.8M passages, 50 queries | 0.14   |
+
+_Note that the above aren't like-for-like, the subset size varies. Larger
+subsets are harder so expect lower MRR@10. The reason for the variation is just
+practical challenges in processing the data within the time available. I will
+try and re-run the above with the full set of data but in the mean time you can
+see what to expect from these interim results._
 
 The approach has two main problems:
 
-1. The initial rough search is too slow and has poor recall due to the large number of document hits.
-2. The "selected" passages of MSMARCO are frequently hard to justify over non-selected passages.
+1. The initial rough search is too slow and has poor recall due to the large
+   number of document hits. When using BM25 instead of dense embeddings for the
+   initial search we see an improved MRR _despite_ running it on the full
+   subset.
+2. The "selected" passages of MSMARCO are frequently hard to justify over
+   non-selected passages.
 
 ## Later:
 

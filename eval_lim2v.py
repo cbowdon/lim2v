@@ -256,7 +256,7 @@ results = []
 was_in_rough = []
 was_in_exhau = []
 times = []
-for qid, query in tqdm(list(queries.items())[:50]):
+for qid, query in tqdm(list(queries.items())[:100]):
     expected = [int(k) for k, v in qrels[qid].items() if v == 1][0]
     _times = [(qid, "t0", time.perf_counter())]
     Eq = embed(query)
